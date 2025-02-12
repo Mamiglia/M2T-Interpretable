@@ -87,16 +87,19 @@ def perform_inference(model, motions, device):
 
 def save_captions(captions, output_folder, vocab: vocabulary):
     # postprocess captions
-    print('caption shape:', captions.shape)
-    tokens_id = captions.argmax(dim=-1).T
+    # print('caption shape:', captions.shape)
+    # logging.info(len(captions))
+    # logging.info(len(captions), len(captions[0]), len(captions[0][0]))
+    # tokens_id = captions.argmax(dim=-1).T
         
     os.makedirs(output_folder, exist_ok=True)
-    for i, caption in enumerate(tokens_id):
-        caption = vocab.decode_numeric_sentence(caption.tolist(), remove_sos_eos=True, ignore_pad=True)
-        print(caption)
-        with open(os.path.join(output_folder, f"caption_{i}.txt"), "w") as f:
-            f.write(caption)
-
+    for sample in captions:
+        for i, caption in enumerate(sample):
+            caption = vocab.decode_numeric_sentence(caption, remove_sos_eos=True, ignore_pad=True)
+            print(caption)
+            with open(os.path.join(output_folder, f"caption_{i}.txt"), "w") as f:
+                f.write(caption)
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True, help="Folder containing input motion npy files")
@@ -123,7 +126,16 @@ if __name__ == "__main__":
     # # # vocab = get_vocab(args)
     # vocab = train.dataset.lang
     # assert train.dataset.lang.vocab_size_unk == args.vocab_size, f"Vocab size mismatch: {train.dataset.lang.vocab_size_unk} != {args.vocab_size}"
-
+    
+    vocab = vocabulary.from_yaml(args.vocab_path)
+    
+    # save token_to_id
+    with open(args.vocab_path, 'w') as file:
+        yaml.dump({
+                'token_to_idx': vocab.token_to_idx,
+                'idx_to_token': vocab.idx_to_token,                
+            }, file)
+        
     model = load_model_config(args, device)
     motions = preprocess_motions(args.input_folder)
     captions = perform_inference(model, motions, device)

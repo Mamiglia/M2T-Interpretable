@@ -1,7 +1,10 @@
 import spacy
 #import contextualSpellCheck
-#from spellchecker import SpellChecker
+from spellchecker import SpellChecker
+# from datasets.kit_dataset import kitDataset   # datasets is required for external import of this file
 import logging
+
+import yaml
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,14 +14,73 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+# TODO READ FROM FILE CORRECTIONS
+replace = {".":"",
+"rigth":"right",
+"bakcward":"backward",
+"ciricle":"circle",
+"cirl":"circle",
+"quater":"quarter",
+"perfoms":"performs",
+"continuos":"continuously",
+"trurns":"turns",
+"trun":"turn",
+"hight":"height",
+"wolks":"walks",
+"walkes":"walks",
+"degress":"degrees",
+"denn":"then",
+"180degree":"180 degrees",
+"angles":"angle",
+"wawing":"waving",
+"sqatted":"squatted",
+"quartercircle":"quarter circle",
+"danse":"dance",
+"beeing":"being",
+'someonewho': 'someone',
+"somone":"someone",
+"befor":"before",
+"bhind":"behind",
+"ontop":"on top",
+"quter":"quarter",
+"inital":"initial",
+"startspot":"start spot",
+"stepstones":"steps",
+"persone":"person",
+u'°': ' degrees',
+'°':' degrees',
+"\n":"",
+"90degrees":"90 degrees",
+'cha cha': 'cha-cha-cha',
+'cha cha cha': 'cha-cha-cha',
+'/ which': ' which',
+'fastly moves': 'moves fast',
+'the person kneeled down is standing up': 'a kneeling person is standing up',
+'tu rns': 'turns',
+"degree":"degrees",
+# '1,5': "medium",
+# "3,5":"big",
+" cm ":" centimeters ",
+"cm ":" centimeters ",
+" centi ":" centimeters ",
+" meter ":" m ",
+" meters ": " m ",
+"andddd":"and",
+' "chicken" ':' chicken ',
+" loki " : " looking "
+}
 
+text2int = {'ninety': '90', 'one': '1','two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '6', 'seven': '7',
+            'eight': '8', 'nine': '9', 'ten': '10','zero': '0'}
 
 class vocabulary():
     def __init__(self, sentences, context_correction=False, correct_tokens=False,ask_user=False):
 
         self.sentences = [ref.lower() for ref in sentences] # list of sentences
+
         self.points = ["-", "=", "<", ">", "\n", "/", '.', ',', '(', ')',
                        ':', ';',":","..",'!',"\r", '?', '"']
+
 
         self.correct_tokens = correct_tokens
         self.context_correction = context_correction
@@ -27,10 +89,11 @@ class vocabulary():
         self.spacy_eng = spacy.load("en_core_web_sm")
         if self.context_correction:
             # Warning time expansive
-            #contextualSpellCheck.add_to_pipe(self.spacy_eng)
+            contextualSpellCheck.add_to_pipe(self.spacy_eng)
             self.context_sentence_correction()
         elif self.correct_tokens:
-            pass
+            # Correction don't take account the context but more fast
+            self.token_correction(ask_user)
         else:
             self.corrected_sentences = self.sentences[:] # independent copy
 
@@ -41,11 +104,69 @@ class vocabulary():
             if len(corrected_desc) >= 1:
                 self.corrected_sentences.append(desc)
                 # for user examination
-                with open("sentence_correction.txt", mode="a") as fa:
+                with open("sentence_correction.txt", mode="a",encoding='utf-8') as fa:
                     fa.write("%s \t %s\n" % (desc, corrected_desc))
             # no correction made conserve the original description
             else:
                 self.corrected_sentences.append(desc)
+
+    def token_correction(self,ask_user=False):
+
+        logging.info("INITIAL CORRECTIONS AND LOWER CASING ...")
+        self.old_sentences = self.sentences[:]
+        for token in replace.keys():
+            for i in range(len(self.sentences)):
+                print("\t%d/%d\r"%(i+1,len(self.sentences)),end="")
+                self.sentences[i] = [ref.lower().replace(token,replace[token]) for ref in self.sentences[i]]
+
+        spell = SpellChecker()
+        shift = 0
+        # CREATE FILE TO SAVE CORRECTED DESCRIPTIONS
+        file_name_corrections = "sentences_corrections"
+        with open(file_name_corrections+".csv", mode="w", encoding='utf-8') as fa: pass
+        for idx, desc in enumerate(self.old_sentences):
+            desc = str(desc)
+            # SOME SPECIAL PRE-PROCESSING
+            tokens = self.language_tokenizer(str(desc))
+            for it,token in enumerate(tokens.copy()):
+                if token in text2int:
+                    logging.info(f'Text to int, {tokens[it]} --> {text2int[token]} ')
+                    tokens[it] = text2int[token]
+                if token in replace:
+                    logging.info("Replacing ...")
+                    tokens[it] = replace[token]
+            # logging.info(tokens,type(tokens[0]))
+            if "" in tokens : tokens.remove("")
+            misppelled = spell.unknown(tokens)
+            if len(list(misppelled)) != 0 :
+                for token in list(misppelled):
+                    if ' ' in token :
+                        logging.info("EMPTY TOKEN [[%s]]" % token)
+                        tokens.remove(token)
+                    elif ask_user:
+                        candidates = spell.candidates(token)
+                        # Ask User to fix
+                        user_correction = input(
+                            '"{}" in sentence "{}" seems to be misspelled. Here are some suggestions: {}\n'.format(
+                                token, desc, candidates))
+                        tokens[tokens.index(token)] = user_correction
+                    if not ask_user or not user_correction: # ask_user is first evaluated
+                        try:
+                            tokens[tokens.index(token)] = spell.correction(token) if spell.correction(token)!='i' else token
+                            logging.info("Token index %d corrected %s ----> %s " % (idx, token, spell.correction(token)))
+                        except ValueError:
+                            logging.info("token %s not found" % token)
+
+            tokens = [token for token in tokens if token not in self.points]
+            desc = " ".join(tokens)
+            self.corrected_sentences.append(desc)
+            # FOR USER EXAMINATION:
+            try:
+                with open(file_name_corrections+".csv", mode="a",encoding='utf-8') as fa:
+                    fa.write("%s \t %s\n" % (self.old_sentences[idx].replace("\n",""),self.corrected_sentences[idx-shift]))
+            except IndexError:
+                    logging.info("description %s NOT USED! ",self.sentences[idx])
+        logging.info("Corrected sentences saved to csv file ")
 
     def build_vocabulary(self, min_freq=1):
         self.token_to_idx = {"<pad>": 0, "<sos>": 1, "<eos>": 2, "<unk>": 3}
@@ -134,3 +255,14 @@ class vocabulary():
     def language_tokenizer(self, sentence):
         sentence = str(sentence) # numpy str --> str
         return [str(token) for token in self.spacy_eng.tokenizer(sentence)]
+    
+    @staticmethod
+    def from_yaml(file):
+        with open(file, 'r') as file:
+            data = yaml.load(file, Loader=yaml.FullLoader)
+            
+        vocab = vocabulary([])
+        vocab.idx_to_token = data['idx_to_token']
+        vocab.vocab_size = len(vocab.idx_to_token)
+        vocab.token_to_idx = data['token_to_idx']
+        return vocab
