@@ -87,16 +87,14 @@ def perform_inference(model, motions, device):
 
 def save_captions(captions, output_folder, vocab: vocabulary):
     # postprocess captions
-    # print('caption shape:', captions.shape)
-    # logging.info(len(captions))
-    # logging.info(len(captions), len(captions[0]), len(captions[0][0]))
-    # tokens_id = captions.argmax(dim=-1).T
+    if isinstance(captions, torch.Tensor):
+        captions = [captions.argmax(dim=-1).T.tolist()]
         
     os.makedirs(output_folder, exist_ok=True)
     for sample in captions:
         for i, caption in enumerate(sample):
             caption = vocab.decode_numeric_sentence(caption, remove_sos_eos=True, ignore_pad=True)
-            print(caption)
+            logging.info(f"Caption {i}: {caption}")
             with open(os.path.join(output_folder, f"caption_{i}.txt"), "w") as f:
                 f.write(caption)
     
