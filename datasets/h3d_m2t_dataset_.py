@@ -5,7 +5,6 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 import torch
 from datasets.vocabulary import vocabulary
-from datasets.classes import categorize_tokens_new
 
 
 class dataset_class(Dataset):
@@ -23,8 +22,9 @@ class dataset_class(Dataset):
 
         self.poses = data['all_motions'] if joint_angles else np.asarray([xyz.reshape(-1,22*3) for xyz in data['kitmld_array']],dtype=object)
         self.poses = self.shift_poses()
+        print(len(self.poses))
         self.poses = np.asarray([ps.reshape(-1, 22 * 3) for ps in self.poses], dtype=object)
-
+        # TODO find correspondence in os.getcwd()+"/datasets/humanML3dtext_2022.npz"
         data_cls = data["old_desc"]
         assert len(data_cls)==len(self.poses)
         self.sentences = [d for ds in data_cls for d in ds] #flat all descriptions in order
@@ -39,13 +39,16 @@ class dataset_class(Dataset):
                 for desc in double_desc:
                     ls = desc.split('\t')
                     self.sentences.append(ls[1][1:].replace("\n","")) #append the corrections and remove first space and newline symbol
-        else:  # Cartesian coordinates
-            self.poses, self.sentences = self.read_data(path_txt=path_txt)
+
+        # Cartesian coordinates
+        else:
+            pass
+            #self.poses, self.sentences = self.read_data(path_txt=path_txt)
         if filter_data:
             logging.info("FILTER POSE WITH NO DESCRIPTION ")
-            _ , id_pose_annotated = self.filter_text(self.sentences)
-            self.poses = self.poses[id_pose_annotated]
-            self.sentences = self.sentences[id_pose_annotated]
+            # _ , id_pose_annotated = self.filter_text(self.sentences)
+            # self.poses = self.poses[id_pose_annotated]
+            # self.sentences = self.sentences[id_pose_annotated]
 
         correct_tokens = False if path_txt or not filter_data and not joint_angles else True
         logging.info(f"CORRECT TOKENS {correct_tokens}")
@@ -53,10 +56,12 @@ class dataset_class(Dataset):
         logging.info(f"Building vocabulary with minimum frequency : {min_freq}")
         self.lang.build_vocabulary(min_freq=min_freq)
         self.corrected_sentences = self.lang.corrected_sentences
+        
+        logging.info(f"Vocabulary size {self.lang.vocab_size} --> {self.lang.vocab_size_unk}")
 
         if filter_data and not joint_angles:
             logging.info("Normalize and save poses")
-            self.poses = self.shift_poses()
+            #self.poses = self.shift_poses()
             self.poses = np.asarray([ps.reshape(-1,22*3) for ps in self.poses],dtype=object)
 
         logging.info("Convert token to numerical values")
@@ -88,7 +93,7 @@ class dataset_class(Dataset):
             logging.info(f"Random state {random_state} fixed to generate the same split")
             self.indxs = list(range(len(self.poses)))
             self.indx_train, self.indx_test = train_test_split(self.indxs, test_size=0.1, random_state=random_state,
-                                                               shuffle=True)
+                                                               shuffle=True)  # IMPORTANT SET SHUFFLE TO FALSE TO PRESERVE POSE LENGTH ORDER SAME IN DATALOADER
             self.indx_train, self.indx_val = train_test_split(self.indx_train, test_size=0.1, random_state=random_state,
                                                               shuffle=True)
         else:
@@ -96,11 +101,12 @@ class dataset_class(Dataset):
             logging.info('Using official split (No random state)')
             self.indx_train = np.where(np.asarray(self.splits_ids) == "train")[0]
             self.indx_val = np.where(np.asarray(self.splits_ids) == "val")[0]
-            self.indx_test = np.where(np.asarray(self.splits_ids) == "test")[0]
+            self.indx_test = np.where(np.asarray(self.splits_ids) == "test")[0]        #Sanity check
 
         len_annot = list((self.map_ids_len).values())  # take lengths of list of descriptions per motion
         cum_len = np.cumsum(len_annot)
         use_multiple_samples = False
+       # TODO WAS CHANGED DENSE DOWN SAMPLING
         dw_factor = 2
 
         filter_per_src = lambda data, min_len, max_len: [j for j, y in enumerate(data) if len(y) >= min_len and len(y)<=max_len]
@@ -109,8 +115,12 @@ class dataset_class(Dataset):
 
         max_src_len = 200 # Maximum motion duration - 10s
         min_src_len = 40 # Minimum motion duration - 2s
-        max_trg_len = 20 # Maximum number of words to generate
         min_refs = 3 # Minimum number of text descriptions for same motion
+
+        # THIS CONSTRAINT FOUND TO BE VERY IMPORTANT TO AVOID PURE LANGUAGE MODELING
+        # UNCONDITIONED ON MOTION WHICH LEDS TO OVER-FITTING
+
+        max_trg_len = 20 # Maximum number of words from refs samples
 
         if not multiple_references:
             # Number of annotations per motion (idmot) <=> self.map_ids_len[id_mot]
@@ -124,13 +134,13 @@ class dataset_class(Dataset):
                                                                                  for id_mot in ids]),dtype=object) for ids in [self.indx_train, self.indx_val, self.indx_test]
                                                       ]
 
-            assert len(self.X_train)==len(self.y_train)
+            assert len(self.X_train)==len(self.y_train), f"X_train {len(self.X_train)} != y_train {len(self.y_train)}"
 
             # FILTER PER MOTION LENGTH
             self.filter(lambda x: filter_per_src(x,min_len=min_src_len,max_len=max_src_len),True,multiple_references)
             # FILTER PER REFS NUMBER
             self.filter(lambda x: filter_per_refs(x,min_refs=min_refs),False,multiple_references)
-            # # FILTER PER TRG LENGTH
+            # FILTER PER TRG LENGTH
             self.filter(lambda x:filter_per_trg(x,max_trg_len=max_trg_len),False,multiple_references)
 
             logging.info("Sort with respect to pose seq_len to reduce padding percentage --> optimize time")
@@ -147,7 +157,7 @@ class dataset_class(Dataset):
             logging.info("Number of flattened samples VAL: %d TRAIN: %d, TEST: %d " % (len(self.X_val), len(self.X_train), len(self.X_test)))
 
         else:
-            self.X_ref_train, self.X_ref_val, self.X_ref_test = [np.asarray([ self.poses[id_mot] for id_mot in ids],dtype=object)          #ids is the index of each pose
+            self.X_ref_train, self.X_ref_val, self.X_ref_test = [np.asarray([ self.poses[id_mot] for id_mot in ids],dtype=object)                        #ids is the index of each pose
                                                                             for ids in [self.indx_train, self.indx_val, self.indx_test] ]
             self.y_ref_train, self.y_ref_val, self.y_ref_test  = [
                                                       np.asarray([self.corrected_sentences_numeric[0 if id_mot==0 else cum_len[id_mot-1] : cum_len[id_mot]]
@@ -160,6 +170,9 @@ class dataset_class(Dataset):
             # FILTER PER REFS NUMBER
             self.filter(lambda x: filter_per_refs(x,min_refs=min_refs),False,multiple_references)
 
+            # NOT TO BE APPLIED DURING INFERENCE
+            # # FILTER PER TRG LENGTH
+            # self.filter(lambda x:filter_per_trg(x,max_trg_len=max_trg_len),False,multiple_references)
 
             logging.info("Sort with respect to pose seq_len to reduce padding percentage --> optimize time")
             self.X_ref_train, self.y_ref_train = sort_wlen(self.X_ref_train, self.y_ref_train)
@@ -174,22 +187,6 @@ class dataset_class(Dataset):
             logging.info("Number  of samples VAL: %d TRAIN: %d, TEST: %d " % (len(self.X_ref_val), len(self.X_ref_train), len(self.X_ref_test)))
         self.Sets = [self.X_train,self.y_train,self.X_val,self.y_val,self.X_test,self.y_test] \
                if not self.multiple_references else [self.X_ref_train,self.y_ref_train,self.X_ref_val,self.y_ref_val,self.X_ref_test,self.y_ref_test]
-
-        # ------------- Guided attention for supervision--------------
-
-        self.gt_dict,self.gt_alpha = categorize_tokens_new(self.lang.idx_to_token.values())
-
-        self.gth_gates = []
-        self.gth_alphas = []
-        for seti in  np.asarray(self.Sets,dtype=object)[[1,3,5]] :
-            gates_per_phrase = []
-            alphas_per_phrase = []
-            for setii in seti:
-                gates_per_phrase += [[self.gt_dict[self.lang.idx_to_token[word]] for word in (setii if not self.multiple_references else setii[0]) ]]
-                alphas_per_phrase += [[self.gt_alpha[self.lang.idx_to_token[word]] for word in (setii if not self.multiple_references else setii[0])]]
-
-            self.gth_gates.append(gates_per_phrase)
-            self.gth_alphas.append(alphas_per_phrase)
 
     def filter(self,filter_function,src=False,multiple_references=False):
         if multiple_references:
@@ -217,14 +214,13 @@ class dataset_class(Dataset):
             keep_ids = filter_function(self.X_val if src else self.y_val)
             self.y_val = self.y_val[keep_ids]
             self.X_val = self.X_val[keep_ids]
-
     def __getitem__(self, item):
         if self.train_:
-            return self.Sets[0][item], self.Sets[1][item], self.gth_gates[0][item] , self.gth_alphas[0][item]
+            return self.Sets[0][item], self.Sets[1][item]  # (variable_sequence_length,n_joint,joint_dim)
         elif self.val_:
-            return self.Sets[2][item], self.Sets[3][item], self.gth_gates[1][item] , self.gth_alphas[1][item]
+            return self.Sets[2][item], self.Sets[3][item]  # (variable_sequence_length,n_joint,joint_dim)
         elif self.test_:
-            return self.Sets[4][item], self.Sets[5][item] , self.gth_gates[2][item] , self.gth_alphas[2][item]
+            return self.Sets[4][item], self.Sets[5][item]  # (variable_sequence_length,n_joint,joint_dim)
 
     def __len__(self):
         if self.train_:
@@ -260,7 +256,7 @@ class dataset_class(Dataset):
     def read_data(self,path_txt=None):
         kitmld = np.load(self.original_path, allow_pickle=True)
         poses = kitmld['kitmld_array']
-        descriptions = kitmld['old_desc'] #kitmld['descriptions']
+        descriptions = kitmld['old_desc']
         if  path_txt:
             return poses, np.asarray(descriptions, dtype=str)
         else:
@@ -277,3 +273,9 @@ class dataset_class(Dataset):
                 pose_annotation.append(idsample)
 
         return missed_annotation, pose_annotation
+
+
+if __name__ == "__main__":
+    # RUN FIRST TO CREATE DATASET CORRECTION
+    path = '/media/hdd/usr/tao/momask-codes/dataset/HumanML3D/' + r"all_humanML3D.npz"
+    data =dataset_class(path,filter_data=True,min_freq=3)
