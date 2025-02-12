@@ -1,8 +1,9 @@
 import argparse
+import logging
 import os
-import pickle
 import torch
 import numpy as np
+import yaml
 from torch.nn.utils.rnn import pad_sequence
 from datasets.loader import build_data
 from datasets.vocabulary import vocabulary
@@ -113,13 +114,16 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--vocab_size", type=int, default=3605)
     parser.add_argument("--multiple_references", type=bool, default=False)
-    parser.add_argument("--dataset_path", type=str, default="/media/hdd/usr/tao/momask-codes/dataset/HumanML3D/all_humanML3D.npz")
+    parser.add_argument("--vocab_path", type=str, default="configs/vocab.yaml")
+    parser.add_argument("--dataset_path", type=str, default="all_humanML3D.npz")
     args = parser.parse_args()
-        
-        
+
     device = torch.device(args.device)
     # train, val, test = load_data(args)
-    vocab = get_vocab(args)
+    # # # vocab = get_vocab(args)
+    # vocab = train.dataset.lang
+    # assert train.dataset.lang.vocab_size_unk == args.vocab_size, f"Vocab size mismatch: {train.dataset.lang.vocab_size_unk} != {args.vocab_size}"
+
     model = load_model_config(args, device)
     motions = preprocess_motions(args.input_folder)
     captions = perform_inference(model, motions, device)
