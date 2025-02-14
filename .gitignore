@@ -3,3 +3,6 @@ __pycache__
 venv
 models
 .vscode
+out
+.txt
+.csv

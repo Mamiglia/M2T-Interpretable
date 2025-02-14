@@ -66,11 +66,12 @@ def get_vocab(args):
     assert vocab.vocab_size == args.vocab_size, f"Vocab size mismatch: {vocab.vocab_size} != {args.vocab_size}"
     return vocab
 
-def preprocess_motions(input_folder):
+def preprocess_motions(input_folder, mean, std):
     motions = []
     for file in os.listdir(input_folder):
         if file.endswith(".npy"):
             motion = np.load(os.path.join(input_folder, file))
+            motion = (motion - mean) / std
             motions.append(torch.tensor(motion, dtype=torch.float32))
     return pad_sequence(motions, batch_first=True)
 
@@ -127,6 +128,10 @@ if __name__ == "__main__":
     
     vocab = vocabulary.from_yaml(args.vocab_path)
     
+    data = np.load('configs/mean_std.npz')
+    mean = data['mean']
+    std = data['std']
+    
     # save token_to_id
     with open(args.vocab_path, 'w') as file:
         yaml.dump({
@@ -135,6 +140,6 @@ if __name__ == "__main__":
             }, file)
         
     model = load_model_config(args, device)
-    motions = preprocess_motions(args.input_folder)
+    motions = preprocess_motions(args.input_folder, mean, std)
     captions = perform_inference(model, motions, device)
     save_captions(captions, args.output_folder, vocab)

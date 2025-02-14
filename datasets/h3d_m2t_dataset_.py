@@ -244,6 +244,12 @@ class dataset_class(Dataset):
         normalized_poses = []
         meandata = np.expand_dims(np.array([mx, my, mz]), axis=(0, 1))
         stddata =  np.expand_dims(np.array([sx, sy, sz]), axis=(0, 1))
+        self.meandata = meandata
+        self.stddata = stddata
+        
+        np.savez("configs/mean_std.npz",mean=meandata,std=stddata)
+        
+        logging.info(f"Mean [{mx}, {my}, {mz}], Std [{sx}, {sy}, {sz}]")
         for k in range(len(poseswtx)):
             normalized_poses.append((poseswtx[k].reshape(-1,22,3) - meandata) /stddata )
 
@@ -252,6 +258,17 @@ class dataset_class(Dataset):
              shift_poses.append(normalized_poses[k]-np.expand_dims(normalized_poses[k].reshape(-1,22,3)[0,0,:],axis=(0,1)))
 
         return  np.asarray(normalized_poses,dtype=object)
+    
+    def normalize_poses(self, poses):
+        logging.info("Mean/Std Normalization")
+        poses = [ps.reshape(-1,22,3) for ps in poses]
+        
+        for k in range(len(poses)):
+            poses[k] = (poses[k] - self.meandata) / self.stddata
+
+        return poses
+
+        
 
     def read_data(self,path_txt=None):
         kitmld = np.load(self.original_path, allow_pickle=True)
